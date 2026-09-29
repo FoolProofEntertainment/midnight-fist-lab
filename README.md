@@ -34,12 +34,56 @@ live via the documented deploy path below, not automatically.
 
 ## Deploy
 
-Game JS changes: upload the edited file through wp-admin Media Library
-(replace the existing upload) or the file editor path the site uses, then
-bump the `?v=` query string in `pp-mfl-runtime-loader.js` so browsers fetch
-the new copy. Page-script changes: edit the matching Custom HTML block on
-the MFL page (ID 6720) in wp-admin. Keep a backup of the replaced file every
-time — the superseded upload is the rollback.
+**Important (learned 2026-09-29):** the runtime loader is NOT a block on page
+6720. Page 6720 carries the comment `<!-- pp-mfl: removed duplicate
+orbital-v2 inline loader (maps-v4 via WPCode pp-mfl-runtime-loader) -->` —
+the loader lives in the WPCode snippet **"MFL runtime loader clean
+20260907" (ID 11313, Active, Site Wide Header, conditional: Page URL Contains
+"midnight-fist-lab")**. The `page-scripts/pp-mfl-runtime-loader.js` copy in
+this repo is a stale snapshot of that snippet; treat the snippet as
+authoritative.
+
+Game JS changes: upload the edited file through wp-admin Media Library (as a
+new file; WordPress may keep or uniquify the name — record the final URL),
+then edit WPCode snippet 11313's `urls` map to point `game` at the new URL
+with a fresh `?v=` cache-buster. Keep a backup of the replaced file every
+time — the superseded upload is the rollback. Page-script changes: edit the
+matching Custom HTML block on the MFL page (ID 6720) in wp-admin.
+
+## Fix pass 1 — deployed live 2026-09-29 04:16 MDT
+
+Game JS: `https://plot-pulse.com/wp-content/uploads/2026/09/midnight-fist-game-18.js?v=20260929fix1`
+(via snippet 11313). Page patch: `page-patches/mfl-cleanup-affordance-20260929.html`
+(hide `#arena-walk-test`, roster bottom-fade affordance) as a Custom HTML
+block at the end of page 6720.
+
+- Fix 1 (partial): `#arena-walk-test` section hidden via CSS. The
+  "SPACE UPPERCUT" / "WINDOW UPPERCUT" badges are intentional finisher badges
+  in `renderArenaPicker()` — left alone. Raven's Hollow flash/seizure warning
+  preserved.
+- Fix 2: fight clock now uses `performance.now()` wall time stamped at fight
+  start (both entry paths); the old dt-accumulator ran slow at low frame
+  rates (verified: 60 real seconds at 10fps showed 79s before, 39s after).
+- Fix 3: hit-stop and screen shake already existed in `applyHit` (40/100ms,
+  shake 6/14) — left intact; added damage numbers riding the existing
+  `comboFloats` pipeline (white, red ≥18, gray when guarded).
+- Fix 4: result screen verified functional in source — `maxCombo`, `powers`,
+  `finisher` are all tracked and rendered with `|| 0` / `|| "None"` fallbacks.
+  No change.
+- Fix 5: display name "Plot-Pulse Theam" → "Plot-Pulse Team" (internal id
+  `plot-pulse-theam` kept for save compat); "Win N fight(s)" pluralized;
+  "Dragon Born" → "Wyrm" (id `dragon-born` kept).
+- Fix 6: `separateFighters()` is now wall-aware — when one fighter is pinned
+  at a wall, only the other is pushed, with unmoved slack handed over; unit
+  tested (corner-left/right/midfield/reversed all hold 54px).
+- Fix 7: roster grid gets a bottom fade while more fighters sit below the
+  fold (`mfl-at-bottom` toggle via scroll + MutationObserver).
+- Fix 8: the GET READY 10s hang did not reproduce in two live boot/fight
+  cycles; left unpatched rather than fixed blind.
+
+Rollback: in snippet 11313, swap the `game` URL back to
+`.../midnight-fist-game-18-maps-v4-window-finisher-feelpack-v02.js?v=20260911v02`.
+Old file retained in the Media Library.
 
 ## Approved fix list (2026-09-29, owner-approved)
 
