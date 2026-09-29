@@ -622,10 +622,10 @@
     fighter("anthony-e1", "Anthony", "E-1 Soldier", "athlete", "crop", "fatigues", "Air Strike", {
       skin: "#b9825f", skinDark: "#6f4632", hair: "#17130f", accent: "#667a42", gloves: "#171b13", trunks: "#4d5f35", trunksDark: "#26301f", boots: "#171b16", white: "#d9d5b8", meter: "#ffb42e",
     }),
-    fighter("plot-pulse-theam", "Plot-Pulse Theam", "Alien Visitor", "lean", "crop", "armor", "Fleet Abduction", {
+    fighter("plot-pulse-theam", "Plot-Pulse Team", "Alien Visitor", "lean", "crop", "armor", "Fleet Abduction", {
       skin: "#72e6a0", skinDark: "#247855", hair: "#10182a", accent: "#7b5cff", gloves: "#13233b", trunks: "#202a49", trunksDark: "#090d1d", boots: "#11192c", white: "#d8fff1", meter: "#5ff6ff",
     }),
-    fighter("dragon-born", "Dragon Born", "Draconic Warrior", "heavy", "spike", "armor", "Storm Breath", {
+    fighter("dragon-born", "Wyrm", "Draconic Warrior", "heavy", "spike", "armor", "Storm Breath", {
       skin: "#3f8d68", skinDark: "#173f34", hair: "#e5d7a5", accent: "#2172bb", gloves: "#172d3f", trunks: "#263d55", trunksDark: "#091521", boots: "#101d29", white: "#effaff", meter: "#69dfff",
     }),
   ];
@@ -2428,6 +2428,7 @@
       enemy = createFighter(false, enemyCharacterId);
       game.phase = "fight";
       game.roundTime = 99;
+      game.roundStartWall = performance.now();
       game.countdown = 0;
       setScreen("fight");
       updateHud();
@@ -3848,7 +3849,7 @@
           chip.textContent = unlocked ? costume.label : `Locked`;
           chip.title = unlocked
             ? `${costume.label}`
-            : `Win ${costume.unlock?.count || 1} fight(s) as ${character.name} (${wins}/${costume.unlock?.count || 1})`;
+            : (() => { const __wc = costume.unlock?.count || 1; return `Win ${__wc} fight${__wc === 1 ? "" : "s"} as ${character.name} (${wins}/${__wc})`; })();
           chip.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -8259,6 +8260,22 @@
     if (comboFloats.length > 18) comboFloats.shift();
   }
 
+  // Damage numbers: same float pipeline as combo counters, so no new render path.
+  function spawnDamageFloat(defender, damage, guarded) {
+    if (!damage || damage < 1) return;
+    comboFloats.push({
+      x: defender.x + (Math.random() - 0.5) * 44,
+      y: defender.y - (defender.h || 112) - 36,
+      text: guarded ? `${damage}` : `-${damage}`,
+      life: 700,
+      maxLife: 700,
+      vy: -64,
+      scale: 0.8,
+      color: guarded ? "#9fb4c7" : damage >= 18 ? "#ff5d5d" : "#ffffff",
+    });
+    if (comboFloats.length > 18) comboFloats.shift();
+  }
+
   function updateComboFloats(dt) {
     for (const float of comboFloats) {
       float.life -= dt;
@@ -8325,6 +8342,7 @@
     defender.combo = 0;
     defender.comboTimer = 0;
     if (!guarded) spawnComboFloat(defender, attacker.combo, attacker.palette?.meter || data.spark || "#ffd86b");
+    spawnDamageFloat(defender, damage, guarded);
 
     const juiceScale = guarded ? 0.45 : 1;
     if (data.juice) {
@@ -8820,15 +8838,28 @@
     const minDist = 54;
     const dx = enemy.x - player.x;
     const overlap = minDist - Math.abs(dx);
-    if (overlap > 0) {
-      const push = overlap / 2;
-      if (dx >= 0) {
-        player.x = clamp(player.x - push, LEFT_WALL, RIGHT_WALL);
-        enemy.x = clamp(enemy.x + push, LEFT_WALL, RIGHT_WALL);
-      } else {
-        player.x = clamp(player.x + push, LEFT_WALL, RIGHT_WALL);
-        enemy.x = clamp(enemy.x - push, LEFT_WALL, RIGHT_WALL);
-      }
+    if (overlap <= 0) return;
+    // When one fighter is pinned against a wall, push only the other one;
+    // the old 50/50 split clamped into the wall and let bodies overlap.
+    const playerAtLeft = player.x <= LEFT_WALL + 1;
+    const playerAtRight = player.x >= RIGHT_WALL - 1;
+    const enemyAtLeft = enemy.x <= LEFT_WALL + 1;
+    const enemyAtRight = enemy.x >= RIGHT_WALL - 1;
+    const pushBoth = (a, b, dir) => {
+      const aNew = clamp(a.x + dir * overlap / 2, LEFT_WALL, RIGHT_WALL);
+      const aMoved = Math.abs(aNew - a.x);
+      a.x = aNew;
+      // If a hit the wall, hand the unmoved remainder to b.
+      b.x = clamp(b.x - dir * (overlap - aMoved), LEFT_WALL, RIGHT_WALL);
+    };
+    if (dx >= 0) {
+      if (enemyAtRight && !playerAtLeft) player.x = clamp(player.x - overlap, LEFT_WALL, RIGHT_WALL);
+      else if (playerAtLeft && !enemyAtRight) enemy.x = clamp(enemy.x + overlap, LEFT_WALL, RIGHT_WALL);
+      else pushBoth(enemy, player, 1);
+    } else {
+      if (playerAtRight && !enemyAtLeft) enemy.x = clamp(enemy.x - overlap, LEFT_WALL, RIGHT_WALL);
+      else if (enemyAtLeft && !playerAtRight) player.x = clamp(player.x + overlap, LEFT_WALL, RIGHT_WALL);
+      else pushBoth(player, enemy, 1);
     }
   }
 
@@ -8872,14 +8903,21 @@
     else {
       hideMessage();
       game.phase = "fight";
+      game.roundStartWall = performance.now();
     }
   }
 
   function updateFightClock(dt) {
-    game.timerAcc += dt;
-    while (game.timerAcc >= 1000) {
-      game.timerAcc -= 1000;
-      game.roundTime = Math.max(0, game.roundTime - 1);
+    // Wall-clock timer: the old dt-accumulator ran slow whenever frames
+    // ran long (dt is capped at 34ms), so 99s rounds dragged past 3 minutes.
+    if (game.roundStartWall != null) {
+      game.roundTime = Math.max(0, 99 - Math.floor((performance.now() - game.roundStartWall) / 1000));
+    } else {
+      game.timerAcc += dt;
+      while (game.timerAcc >= 1000) {
+        game.timerAcc -= 1000;
+        game.roundTime = Math.max(0, game.roundTime - 1);
+      }
     }
     if (game.roundTime <= 0) {
       if (player.health >= enemy.health) {
